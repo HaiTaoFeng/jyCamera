@@ -179,12 +179,12 @@ public final class RenderHandler implements Runnable {
 					// 绘制到预览屏幕
 					mDrawer.draw(mTexId, mMatrix);
 					//画静态水印
-					GLES20.glViewport(20, 20, 288, 120);
+					GLES20.glViewport(20, 20, 100, 50);
 					mWaterSign.drawFrame(mSignTexId);
 					//添加时间水印
 					date = new Date();
 					time = formatter.format(date);
-					drawWaterSign(time, 100, 200);
+					drawWaterSign(time, 160, 300);
 					mInputSurface.swap();
 				}
 			} else {

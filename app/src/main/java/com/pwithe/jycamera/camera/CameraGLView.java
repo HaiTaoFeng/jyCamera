@@ -1,37 +1,15 @@
 package com.pwithe.jycamera.camera;
-/*
- * AudioVideoRecordingSample
- * Sample project to cature audio and video from internal mic/camera and save as MPEG4 file.
- *
- * Copyright (c) 2014-2015 saki t_saki@serenegiant.com
- *
- * File name: CameraGLView.java
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- *  You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- *  Unless required by applicable law or agreed to in writing, software
- *  distributed under the License is distributed on an "AS IS" BASIS,
- *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- *  See the License for the specific language governing permissions and
- *  limitations under the License.
- *
- * All files in the folder are under this Apache License, Version 2.0.
-*/
 
 import android.content.Context;
 import android.graphics.Bitmap;
-import android.graphics.BitmapFactory;
 import android.graphics.SurfaceTexture;
 import android.hardware.Camera;
 import android.opengl.EGL14;
 import android.opengl.GLES20;
+import android.opengl.GLException;
 import android.opengl.GLSurfaceView;
-import android.opengl.GLUtils;
 import android.opengl.Matrix;
+import android.os.Environment;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.Message;
@@ -39,17 +17,27 @@ import android.util.AttributeSet;
 import android.util.Log;
 import android.view.Display;
 import android.view.Surface;
+import android.view.SurfaceHolder;
 import android.view.WindowManager;
 
-
+import com.pwithe.jycamera.CommApplication;
 import com.pwithe.jycamera.R;
 import com.pwithe.jycamera.drawer.GLDrawer2D;
+import com.pwithe.jycamera.drawer.TextureHelper;
 import com.pwithe.jycamera.drawer.WaterSignSProgram;
 import com.pwithe.jycamera.drawer.WaterSignature;
+import com.pwithe.jycamera.record.MediaMuxerWrapper;
 import com.pwithe.jycamera.record.MediaVideoEncoder;
+import com.pwithe.jycamera.utils.BitmapUtil;
 
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
+import java.io.File;
+import java.io.FileNotFoundException;
+import java.io.FileOutputStream;
 import java.io.IOException;
 import java.lang.ref.WeakReference;
+import java.nio.IntBuffer;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.List;
@@ -58,11 +46,10 @@ import javax.microedition.khronos.egl.EGLConfig;
 import javax.microedition.khronos.opengles.GL10;
 
 /**
- * Sub class of GLSurfaceView to display camera preview and write video frame to capturing surface
+ * GLSurfaceView的子类，用于显示相机预览并将视频帧写入捕获曲面
  */
 public final class CameraGLView extends GLSurfaceView {
 
-	private static final boolean DEBUG = true; // TODO set false on release
 	private static final String TAG = "CameraGLView";
 
 	private static final int CAMERA_ID = 0;
@@ -78,7 +65,7 @@ public final class CameraGLView extends GLSurfaceView {
 	private int mVideoWidth, mVideoHeight;
 	private int mRotation;
 	private int mScaleMode = SCALE_STRETCH_FIT;
-	public static Context mContext;
+
 
 	public CameraGLView(final Context context) {
 		this(context, null, 0);
@@ -90,39 +77,34 @@ public final class CameraGLView extends GLSurfaceView {
 
 	public CameraGLView(final Context context, final AttributeSet attrs, final int defStyle) {
 		super(context, attrs);
-		if (DEBUG) Log.v(TAG, "CameraGLView:");
+		Log.v(TAG, "CameraGLView:");
 		mRenderer = new CameraSurfaceRenderer(this);
 		setEGLContextClientVersion(2);	// GLES 2.0, API >= 8
 		setRenderer(mRenderer);
-		setPreserveEGLContextOnPause(true);
-		mContext = context;
-		//setRenderMode(RENDERMODE_WHEN_DIRTY);
-/*		// the frequency of refreshing of camera preview is at most 15 fps
-		// and RENDERMODE_WHEN_DIRTY is better to reduce power consumption
-		setRenderMode(GLSurfaceView.RENDERMODE_WHEN_DIRTY); */
 	}
+
 
 	@Override
 	public void onResume() {
-		if (DEBUG) Log.v(TAG, "onResume:");
+		Log.v(TAG, "onResume:");
 		super.onResume();
 		if (mHasSurface) {
 			if (mCameraHandler == null) {
-				if (DEBUG) Log.v(TAG, "surface already exist");
+				Log.v(TAG, "surface already exist");
 				startPreview(getWidth(),  getHeight());
 			}
 		}
 	}
 
-	/*@Override
+	@Override
 	public void onPause() {
-		if (DEBUG) Log.v(TAG, "onPause:");
+		Log.v(TAG, "onPause:");
 		if (mCameraHandler != null) {
-			// just request stop prviewing
+			// 停止预览
 			mCameraHandler.stopPreview(false);
 		}
 		super.onPause();
-	}*/
+	}
 
 	public void setScaleMode(final int mode) {
 		if (mScaleMode != mode) {
@@ -144,6 +126,7 @@ public final class CameraGLView extends GLSurfaceView {
 		if ((mRotation % 180) == 0) {
 			mVideoWidth = width;
 			mVideoHeight = height;
+
 		} else {
 			mVideoWidth = height;
 			mVideoHeight = width;
@@ -165,40 +148,31 @@ public final class CameraGLView extends GLSurfaceView {
 	}
 
 	public SurfaceTexture getSurfaceTexture() {
-		if (DEBUG) Log.v(TAG, "getSurfaceTexture:");
+		Log.v(TAG, "getSurfaceTexture:");
 		return mRenderer != null ? mRenderer.mSTexture : null;
 	}
 
-
-	public  void reslease(){
-		if (mCameraHandler != null) {
-			// wait for finish previewing here
-			// otherwise camera try to display on un-exist Surface and some error will occure
-			mCameraHandler.stopPreview(true);
-		}
-	}
-	/*@Override
+	@Override
 	public void surfaceDestroyed(final SurfaceHolder holder) {
-		if (DEBUG) Log.v(TAG, "surfaceDestroyed:");
+		Log.v(TAG, "surfaceDestroyed:");
 		if (mCameraHandler != null) {
-			// wait for finish previewing here
-			// otherwise camera try to display on un-exist Surface and some error will occure
+			// 销毁surface
 			mCameraHandler.stopPreview(true);
 		}
 		mCameraHandler = null;
 		mHasSurface = false;
 		mRenderer.onSurfaceDestroyed();
 		super.surfaceDestroyed(holder);
-	}*/
+	}
 
 	public void setVideoEncoder(final MediaVideoEncoder encoder) {
-		if (DEBUG) Log.v(TAG, "setVideoEncoder:tex_id=" + mRenderer.hTex + ",encoder=" + encoder);
+//		Log.v(TAG, "setVideoEncoder:tex_id=" + mRenderer.hTex + ",encoder=" + encoder);
 		queueEvent(new Runnable() {
 			@Override
 			public void run() {
 				synchronized (mRenderer) {
 					if (encoder != null) {
-						encoder.setEglContext(EGL14.eglGetCurrentContext(), mRenderer.hTex[0]);
+						encoder.setEglContext(EGL14.eglGetCurrentContext(), mRenderer.hTex);
 					}
 					mRenderer.mVideoEncoder = encoder;
 				}
@@ -217,94 +191,68 @@ public final class CameraGLView extends GLSurfaceView {
 		mCameraHandler.startPreview(1280, 720/*width, height*/);
 	}
 
-
-
 	/**
-	 * GLSurfaceViewのRenderer
+	 * glsurfaceView渲染器
 	 */
 	private static final class CameraSurfaceRenderer
-		implements Renderer,
+		implements GLSurfaceView.Renderer,
 					SurfaceTexture.OnFrameAvailableListener {	// API >= 11
 
 		private final WeakReference<CameraGLView> mWeakParent;
 		private SurfaceTexture mSTexture;	// API >= 11
-		private int[] hTex= new int[2];
+		private int hTex;
 		private GLDrawer2D mDrawer;
 		private final float[] mStMatrix = new float[16];
 		private final float[] mMvpMatrix = new float[16];
 		private MediaVideoEncoder mVideoEncoder;
-
 		private WaterSignature mWaterSign;
+		private BitmapUtil bitmapUtil;
 		private int mSignTexId;
+
+
 		public CameraSurfaceRenderer(final CameraGLView parent) {
-			if (DEBUG) Log.v(TAG, "CameraSurfaceRenderer:");
+			Log.v(TAG, "CameraSurfaceRenderer:");
 			mWeakParent = new WeakReference<CameraGLView>(parent);
 			Matrix.setIdentityM(mMvpMatrix, 0);
+			mWaterSign = new WaterSignature();
+			bitmapUtil = CommApplication.getBitmapUtil();
 		}
 
 		@Override
 		public void onSurfaceCreated(final GL10 unused, final EGLConfig config) {
-			if (DEBUG) Log.v(TAG, "onSurfaceCreated:");
+			Log.v(TAG, "onSurfaceCreated:");
 			// This renderer required OES_EGL_image_external extension
 			final String extensions = GLES20.glGetString(GLES20.GL_EXTENSIONS);	// API >= 8
-//			if (DEBUG) Log.i(TAG, "onSurfaceCreated:Gl extensions: " + extensions);
+			//判断系统是否支持OES_EGL_image_external
 			if (!extensions.contains("OES_EGL_image_external"))
 				throw new RuntimeException("This system does not support OES_EGL_image_external.");
-			// create textur ID
-			hTex[0] = GLDrawer2D.initTex();
-			// create SurfaceTexture with texture ID.
-			mSTexture = new SurfaceTexture(hTex[0]);
+			// 创建 textur ID
+			hTex = GLDrawer2D.initTex();
+			// 通过textur ID创建SurfaceTexture
+			mSTexture = new SurfaceTexture(hTex);
 			mSTexture.setOnFrameAvailableListener(this);
-			// clear screen with yellow color so that you can see rendering rectangle
+			// 使用黄色清除界面
 			GLES20.glClearColor(1.0f, 1.0f, 0.0f, 1.0f);
 			final CameraGLView parent = mWeakParent.get();
 			if (parent != null) {
 				parent.mHasSurface = true;
 			}
-			// create object for preview display
+			// 为预览显示创建对象
 			mDrawer = new GLDrawer2D();
 			mDrawer.setMatrix(mMvpMatrix, 0);
-			if (mWaterSign == null) {
-				mWaterSign = new WaterSignature();
-			}
+			//设置水印
+            if (mWaterSign == null) {
+                mWaterSign = new WaterSignature();
+            }
+            //设置阴影
 			mWaterSign.setShaderProgram(new WaterSignSProgram());
-			hTex[1] = loadTexture(mContext.getApplicationContext(), R.mipmap.watermark);
+			mSignTexId = TextureHelper.loadTexture(CommApplication.getInstance(), R.mipmap.watermark);
 		}
-		public static int loadTexture(Context context, int resourceId) {
-			final int[] textureObjectIds = new int[1];
-			GLES20.glGenTextures(1, textureObjectIds, 0);
-			if(textureObjectIds[0] == 0){
-				Log.e(TAG,"Could not generate a new OpenGL texture object!");
-				return 0;
-			}
-			final BitmapFactory.Options options = new BitmapFactory.Options();
-			options.inScaled = false;   //指定需要的是原始数据，非压缩数据
-			final Bitmap bitmap = BitmapFactory.decodeResource(context.getResources(), resourceId, options);
-			if(bitmap == null){
-				Log.e(TAG, "Resource ID "+resourceId + "could not be decode");
-				GLES20.glDeleteTextures(1, textureObjectIds, 0);
-				return 0;
-			}
-			//告诉OpenGL后面纹理调用应该是应用于哪个纹理对象
-			GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, textureObjectIds[0]);
-			//设置缩小的时候（GL_TEXTURE_MIN_FILTER）使用mipmap三线程过滤
-			GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_MIN_FILTER, GLES20.GL_LINEAR_MIPMAP_LINEAR);
-			//设置放大的时候（GL_TEXTURE_MAG_FILTER）使用双线程过滤
-			GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_MAG_FILTER, GLES20.GL_LINEAR);
-			//Android设备y坐标是反向的，正常图显示到设备上是水平颠倒的，解决方案就是设置纹理包装，纹理T坐标（y）设置镜面重复
-			//ball读取纹理的时候  t范围坐标取正常值+1
-			//GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_WRAP_T, GLES20.GL_MIRRORED_REPEAT);
-			GLUtils.texImage2D(GLES20.GL_TEXTURE_2D, 0, bitmap, 0);
-			bitmap.recycle();
-			//快速生成mipmap贴图
-			GLES20.glGenerateMipmap(GLES20.GL_TEXTURE_2D);
-			//解除纹理操作的绑定
-			GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, 0);
-			return textureObjectIds[0];
-		}
+
+		@Override
 		public void onSurfaceChanged(final GL10 unused, final int width, final int height) {
-			if (DEBUG) Log.v(TAG, String.format("onSurfaceChanged:(%d,%d)", width, height));
-			// if at least with or height is zero, initialization of this view is still progress.
+			Log.v(TAG, String.format("onSurfaceChanged:(%d,%d)", width, height));
+			//如果至少with或height为零，则此视图的初始化仍在进行中。
 			if ((width == 0) || (height == 0)) return;
 			updateViewport();
 			final CameraGLView parent = mWeakParent.get();
@@ -314,10 +262,10 @@ public final class CameraGLView extends GLSurfaceView {
 		}
 
 		/**
-		 * when GLSurface context is soon destroyed
+		 * 当glsurface上下文被销毁时
 		 */
 		public void onSurfaceDestroyed() {
-			if (DEBUG) Log.v(TAG, "onSurfaceDestroyed:");
+			Log.v(TAG, "onSurfaceDestroyed:");
 			if (mDrawer != null) {
 				mDrawer.release();
 				mDrawer = null;
@@ -330,7 +278,10 @@ public final class CameraGLView extends GLSurfaceView {
 				mSTexture.release();
 				mSTexture = null;
 			}
-			GLDrawer2D.deleteTex(hTex[0]);
+			GLDrawer2D.deleteTex(hTex);
+			WaterSignature.deleteTex(mSignTexId);
+			//回收bitmap
+			bitmapUtil.recyle();
 		}
 
 		private final void updateViewport() {
@@ -355,20 +306,20 @@ public final class CameraGLView extends GLSurfaceView {
 					int x, y;
 					int width, height;
 					if (view_aspect > req) {
-						// if view is wider than camera image, calc width of drawing area based on view height
+						// 如果视图宽度大于相机图像，则根据视图高度计算绘图区域的宽度
 						y = 0;
 						height = view_height;
 						width = (int)(req * view_height);
 						x = (view_width - width) / 2;
 					} else {
-						// if view is higher than camera image, calc height of drawing area based on view width
+						// 如果视图高于相机图像，则根据视图宽度计算绘图区域的高度
 						x = 0;
 						width = view_width;
 						height = (int)(view_width / req);
 						y = (view_height - height) / 2;
 					}
-					// set viewport to draw keeping aspect ration of camera image
-					if (DEBUG) Log.v(TAG, String.format("xy(%d,%d),size(%d,%d)", x, y, width, height));
+					// 设置视区以绘制相机图像的保持纵横比
+					Log.v(TAG, String.format("xy(%d,%d),size(%d,%d)", x, y, width, height));
 					GLES20.glViewport(x, y, width, height);
 					break;
 				}
@@ -394,45 +345,52 @@ public final class CameraGLView extends GLSurfaceView {
 
 		private volatile boolean requesrUpdateTex = false;
 		private boolean flip = true;
+		private int[] fTexture = new int[1];
 		/**
-		 * drawing to GLSurface
-		 * we set renderMode to GLSurfaceView.RENDERMODE_WHEN_DIRTY,
-		 * this method is only called when #requestRender is called(= when texture is required to update)
-		 * if you don't set RENDERMODE_WHEN_DIRTY, this method is called at maximum 60fps
+		 * 绘图到glsurface
+		 * 我们将rendermode设置为glsurfaceview.rendermode_when_dirty，
+		 * 仅当调用requestrender时调用此方法（=需要更新纹理时）
+		 * 如果不在脏时设置rendermode，则此方法的最大调用速度为60fps。
 		 */
 		@Override
 		public void onDrawFrame(final GL10 unused) {
 			GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT);
-
-//			GLES20.glEnable(GLES20.GL_BLEND);
-//			//开启GL的混合模式，即图像叠加
-//			GLES20.glBlendFunc(GLES20.GL_ONE, GLES20.GL_ONE_MINUS_SRC_ALPHA);
-
+			GLES20.glEnable(GLES20.GL_BLEND);
+			GLES20.glBlendFunc(GLES20.GL_ONE, GLES20.GL_ONE_MINUS_SRC_ALPHA);
 			if (requesrUpdateTex) {
 				requesrUpdateTex = false;
-				// update texture(came from camera)
+				// 更新texture（来自相机）
 				mSTexture.updateTexImage();
-				// get texture matrix
+				// 获取texture矩阵
 				mSTexture.getTransformMatrix(mStMatrix);
 			}
-			// draw to preview screen
-			if (mDrawer!=null)mDrawer.draw(hTex[0], mStMatrix);
+			// 绘制到预览屏幕
+			final CameraGLView parent = mWeakParent.get();
+			final int view_width = parent.getWidth();
+			final int view_height = parent.getHeight();
+			GLES20.glViewport(0, 0, view_width, view_height);
+			mDrawer.draw(hTex, mStMatrix);
+			if (isPhoto) {
+				isPhoto = false;
+				savePicture(view_width,view_height);
+			}
 			//画水印（非动态）
+//			GLES20.glViewport(20, 20, 288, 120);
+//			mWaterSign.drawFrame(mSignTexId);
 
-//			mWaterSign.drawFrame(hTex[1]);
-//			GLES20.glDisable(GLES20.GL_BLEND);// 禁用关闭混合
+			//画水印
+//			GLES20.glViewport(160, 300, 320, 60);
+//			mWaterSign.drawFrame(mWaterTexId);
 			flip = !flip;
 			if (flip) {	// ~30fps
 				synchronized (this) {
-					if (mVideoEncoder != null
-							&& !mVideoEncoder.getState()) {
-						// notify to capturing thread that the camera frame is available.
+					if (mVideoEncoder != null) {
+						// 通知捕获线程相机帧可用。
 //						mVideoEncoder.frameAvailableSoon(mStMatrix);
 						mVideoEncoder.frameAvailableSoon(mStMatrix, mMvpMatrix);
 					}
 				}
 			}
-
 		}
 
 		@Override
@@ -442,11 +400,87 @@ public final class CameraGLView extends GLSurfaceView {
 //			if (parent != null)
 //				parent.requestRender();
 		}
+		/**
+		 * 标记是否需要获取当前一帧图片
+		 */
+		private boolean isPhoto = false;
+		public void setPhoto(boolean photo) {
+			isPhoto = photo;
+		}
 	}
 
+	/**
+	 * 拍照方法
+	 * 实现原理：因为视频一直在绘制画面，拍照时我们只需在视频绘制的那一瞬间的画面保存下来。
+	 * 第一步、使用glReadPixels()方法读gl的屏幕像素点到内存；
+	 * 第二步、将数据转化成bitmap；
+	 * 第三步、将bitmap保存为图片。
+	 *
+	 * 缺点：虽然是可以边录制边拍照，但是在生成图片的一瞬间视频会有卡顿
+	 */
+	public void takePicture() {
+		if (mRenderer != null) {
+			mRenderer.setPhoto(true);
+		}
+	}
+	public static void savePicture(int mWidth,int mHeight) {
+		Bitmap mBitmap = createBitmapFromGLSurface(mWidth,mHeight);
+		ByteArrayOutputStream bos = new ByteArrayOutputStream();
+		mBitmap.compress(Bitmap.CompressFormat.JPEG, 100, bos);
+		byte[] bitmapdata = bos.toByteArray();
+		ByteArrayInputStream fis = new ByteArrayInputStream(bitmapdata);
+		String path = MediaMuxerWrapper.getCaptureFile(Environment.DIRECTORY_MOVIES, ".png").toString();
+		try {
+			File tmpFile = new File(path);
+			FileOutputStream fos = new FileOutputStream(tmpFile);
+			byte[] buf = new byte[1024];
+			int len;
+			while ((len = fis.read(buf)) > 0) {
+				fos.write(buf, 0, len);
+			}
+			fis.close();
+			fos.close();
+		} catch (FileNotFoundException e) {
+			e.printStackTrace();
+		} catch (IOException e) {
+			e.printStackTrace();
+		}
+	}
+
+	//将数据转化成Bitmap
+	private static Bitmap createBitmapFromGLSurface(int mWidth, int mHeight){
+		int w = mWidth;
+		int h = mHeight;
+		int bitmapBuffer[] = new int[(int) (w * h)];
+		int bitmapSource[] = new int[(int) (w * h)];
+		IntBuffer buffer = IntBuffer.wrap(bitmapBuffer);
+		buffer.position(0);
+		try {
+			GLES20.glReadPixels(0, 0, w, h, GLES20.GL_RGBA, GLES20.GL_UNSIGNED_BYTE, buffer);
+			for (int i = 0; i < h; i++) {
+				for (int j = 0; j < w; j++) {
+					int pix = bitmapBuffer[i * w + j];
+					int pb = (pix >> 16) & 0xff;
+					int pr = (pix << 16) & 0x00ff0000;
+					int pix1 = (pix & 0xff00ff00) | pr | pb;
+					bitmapSource[(h - i - 1) * w + j] = pix1;
+				}
+			}
+		}catch (GLException e){
+			e.printStackTrace();
+			return null;
+		}
+		Bitmap inBitmap = null;
+		if (inBitmap == null || !inBitmap.isMutable()
+				|| inBitmap.getWidth() != w || inBitmap.getHeight() != h) {
+			inBitmap = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888);
+		}
+		inBitmap.copyPixelsFromBuffer(buffer);
+		return Bitmap.createBitmap(bitmapSource, w, h, Bitmap.Config.ARGB_8888);
+	}
 
 	/**
-	 * Handler class for asynchronous camera operation
+	 * 异步摄像机操作的处理程序类
 	 */
 	private static final class CameraHandler extends Handler {
 		private static final int MSG_PREVIEW_START = 1;
@@ -462,15 +496,15 @@ public final class CameraGLView extends GLSurfaceView {
 		}
 
 		/**
-		 * request to stop camera preview
-		 * @param needWait need to wait for stopping camera preview
+		 * 请求停止相机预览
+		 * @param needWait 需要等待停止相机预览
 		 */
 		public void stopPreview(final boolean needWait) {
 			synchronized (this) {
 				sendEmptyMessage(MSG_PREVIEW_STOP);
 				if (needWait && mThread.mIsRunning) {
 					try {
-						if (DEBUG) Log.d(TAG, "wait for terminating of camera thread");
+						Log.d(TAG, "等待摄像头线程终止 ");
 						wait();
 					} catch (final InterruptedException e) {
 					}
@@ -479,7 +513,7 @@ public final class CameraGLView extends GLSurfaceView {
 		}
 
 		/**
-		 * message handler for camera thread
+		 * 摄像头线程的消息处理程序
 		 */
 		@Override
 		public void handleMessage(final Message msg) {
@@ -502,7 +536,7 @@ public final class CameraGLView extends GLSurfaceView {
 	}
 
 	/**
-	 * Thread for asynchronous operation of camera preview
+	 * 相机预览异步操作线程
 	 */
 	private static final class CameraThread extends Thread {
     	private final Object mReadyFence = new Object();
@@ -528,12 +562,12 @@ public final class CameraGLView extends GLSurfaceView {
     	}
 
     	/**
-    	 * message loop
-    	 * prepare Looper and create Handler for this thread
+    	 * 消息循环
+		 *准备循环器并为此线程创建处理程序
     	 */
 		@Override
 		public void run() {
-            if (DEBUG) Log.d(TAG, "Camera thread start");
+            Log.d(TAG, "Camera thread start");
             Looper.prepare();
             synchronized (mReadyFence) {
                 mHandler = new CameraHandler(this);
@@ -541,7 +575,7 @@ public final class CameraGLView extends GLSurfaceView {
                 mReadyFence.notify();
             }
             Looper.loop();
-            if (DEBUG) Log.d(TAG, "Camera thread finish");
+            Log.d(TAG, "Camera thread finish");
             synchronized (mReadyFence) {
                 mHandler = null;
                 mIsRunning = false;
@@ -549,16 +583,16 @@ public final class CameraGLView extends GLSurfaceView {
 		}
 
 		/**
-		 * start camera preview
+		 * 开始相机预览
 		 * @param width
 		 * @param height
 		 */
 		private final void startPreview(final int width, final int height) {
-			if (DEBUG) Log.v(TAG, "startPreview:");
+			Log.v(TAG, "startPreview:");
 			final CameraGLView parent = mWeakParent.get();
 			if ((parent != null) && (mCamera == null)) {
-				// This is a sample project so just use 0 as camera ID.
-				// it is better to selecting camera is available
+				//这是一个示例项目，因此只需使用0作为相机ID。
+				// 最好选择摄像头可用
 				try {
 					mCamera = Camera.open(CAMERA_ID);
 					final Camera.Parameters params = mCamera.getParameters();
@@ -568,9 +602,9 @@ public final class CameraGLView extends GLSurfaceView {
 					} else if(focusModes.contains(Camera.Parameters.FOCUS_MODE_AUTO)) {
 						params.setFocusMode(Camera.Parameters.FOCUS_MODE_AUTO);
 					} else {
-						if (DEBUG) Log.i(TAG, "Camera does not support autofocus");
+						Log.i(TAG, "Camera does not support autofocus");
 					}
-					// let's try fastest frame rate. You will get near 60fps, but your device become hot.
+					// 让我们试试最快的帧速率。你将接近60帧每秒，但你的设备会变热。
 					final List<int[]> supportedFpsRange = params.getSupportedPreviewFpsRange();
 //					final int n = supportedFpsRange != null ? supportedFpsRange.size() : 0;
 //					int[] range;
@@ -582,22 +616,22 @@ public final class CameraGLView extends GLSurfaceView {
 					Log.i(TAG, String.format("fps:%d-%d", max_fps[0], max_fps[1]));
 					params.setPreviewFpsRange(max_fps[0], max_fps[1]);
 					params.setRecordingHint(true);
-					// request closest supported preview size
+					// 请求最接近支持的预览大小
 					final Camera.Size closestSize = getClosestSupportedSize(
 						params.getSupportedPreviewSizes(), width, height);
 					params.setPreviewSize(closestSize.width, closestSize.height);
-					// request closest picture size for an aspect ratio issue on Nexus7
+					// 在nexus7上为纵横比问题请求最接近的图片大小
 					final Camera.Size pictureSize = getClosestSupportedSize(
 						params.getSupportedPictureSizes(), width, height);
 					params.setPictureSize(pictureSize.width, pictureSize.height);
-					// rotate camera preview according to the device orientation
+					// 根据设备方向旋转相机预览
 					setRotation(params);
 					mCamera.setParameters(params);
-					// get the actual preview size
+					// 获取实际预览大小
 					final Camera.Size previewSize = mCamera.getParameters().getPreviewSize();
 					Log.i(TAG, String.format("previewSize(%d, %d)", previewSize.width, previewSize.height));
-					// adjust view size with keeping the aspect ration of camera preview.
-					// here is not a UI thread and we should request parent view to execute.
+					//通过保持相机预览的纵横比来调整视图大小。
+					// 这里不是UI线程，我们应该请求父视图执行。
 					parent.post(new Runnable() {
 						@Override
 						public void run() {
@@ -621,7 +655,7 @@ public final class CameraGLView extends GLSurfaceView {
 					}
 				}
 				if (mCamera != null) {
-					// start camera preview display
+					// 开始相机预览显示
 					mCamera.startPreview();
 				}
 			}
@@ -643,10 +677,10 @@ public final class CameraGLView extends GLSurfaceView {
 		}
 
 		/**
-		 * stop camera preview
+		 * 停止相机预览
 		 */
 		private void stopPreview() {
-			if (DEBUG) Log.v(TAG, "stopPreview:");
+			Log.v(TAG, "stopPreview:");
 			if (mCamera != null) {
 				mCamera.stopPreview();
 		        mCamera.release();
@@ -658,11 +692,11 @@ public final class CameraGLView extends GLSurfaceView {
 		}
 
 		/**
-		 * rotate preview screen according to the device orientation
+		 * 根据设备方向旋转预览屏幕
 		 * @param params
 		 */
 		private final void setRotation(final Camera.Parameters params) {
-			if (DEBUG) Log.v(TAG, "setRotation:");
+			Log.v(TAG, "setRotation:");
 			final CameraGLView parent = mWeakParent.get();
 			if (parent == null) return;
 
@@ -676,23 +710,22 @@ public final class CameraGLView extends GLSurfaceView {
 				case Surface.ROTATION_180: degrees = 180; break;
 				case Surface.ROTATION_270: degrees = 270; break;
 			}
-			// get whether the camera is front camera or back camera
+			// 了解摄像头是前置摄像头还是后置摄像头
 			final Camera.CameraInfo info =
-					new Camera.CameraInfo();
-				Camera.getCameraInfo(CAMERA_ID, info);
+					new android.hardware.Camera.CameraInfo();
+				android.hardware.Camera.getCameraInfo(CAMERA_ID, info);
 			mIsFrontFace = (info.facing == Camera.CameraInfo.CAMERA_FACING_FRONT);
-			if (mIsFrontFace) {	// front camera
+			if (mIsFrontFace) {	// 前置摄像头
 				degrees = (info.orientation + degrees) % 360;
 				degrees = (360 - degrees) % 360;  // reverse
-			} else {  // back camera
+			} else {  // 后置摄像头
 				degrees = (info.orientation - degrees + 360) % 360;
 			}
-			// apply rotation setting
+			// 应用旋转设置
 			mCamera.setDisplayOrientation(degrees);
 			parent.mRotation = degrees;
-			// XXX This method fails to call and camera stops working on some devices.
+			// 此方法无法调用，相机停止在某些设备上工作。
 //			params.setRotation(degrees);
 		}
-
 	}
 }

@@ -4,15 +4,15 @@ import android.opengl.GLES20;
 import android.opengl.Matrix;
 import android.util.Log;
 
+import com.pwithe.jycamera.utils.GlUtil;
 
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.FloatBuffer;
 
 
-
 /**
- * Created by fenghaitao on 2019/9/12.这是画水印的Java类
+ * Created by fenghaitao on 2019/9/12.
  */
 
 public class WaterSignature {
@@ -107,26 +107,25 @@ public class WaterSignature {
     }
 
     public void drawFrame(int mTextureId) {
-        GLES20.glViewport(20, 20, 288, 120);
         GLES20.glUseProgram(hProgram);
         // 设置纹理
         GLES20.glActiveTexture(GLES20.GL_TEXTURE0);
         GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, mTextureId);
         GLES20.glUniform1i(mProgram.sTextureLoc, 0);
-//        GlUtil.checkGlError("GL_TEXTURE_2D sTexture");
+        GlUtil.checkGlError("GL_TEXTURE_2D sTexture");
         // 设置 model / view / projection 矩阵
         GLES20.glUniformMatrix4fv(mProgram.uMVPMatrixLoc, 1, false, getFinalMatrix(), 0);
-//        GlUtil.checkGlError("glUniformMatrix4fv uMVPMatrixLoc");
+        GlUtil.checkGlError("glUniformMatrix4fv uMVPMatrixLoc");
         // 使用简单的VAO 设置顶点坐标数据
         GLES20.glEnableVertexAttribArray(mProgram.aPositionLoc);
         GLES20.glVertexAttribPointer(mProgram.aPositionLoc, mCoordsPerVertex,
                 GLES20.GL_FLOAT, false, mVertexStride, mVertexArray);
-//        GlUtil.checkGlError("VAO aPositionLoc");
+        GlUtil.checkGlError("VAO aPositionLoc");
         // 使用简单的VAO 设置纹理坐标数据
         GLES20.glEnableVertexAttribArray(mProgram.aTextureCoordLoc);
         GLES20.glVertexAttribPointer(mProgram.aTextureCoordLoc, mCoordsPerTexture,
                 GLES20.GL_FLOAT, false, mTexCoordStride, mTexCoordArray);
-//        GlUtil.checkGlError("VAO aTextureCoordLoc");
+        GlUtil.checkGlError("VAO aTextureCoordLoc");
         // GL_TRIANGLE_STRIP三角形带，这就为啥只需要指出4个坐标点，就能画出两个三角形了。
         GLES20.glDrawArrays(GLES20.GL_TRIANGLE_STRIP, 0, mVertexCount);
         // Done -- 解绑~
